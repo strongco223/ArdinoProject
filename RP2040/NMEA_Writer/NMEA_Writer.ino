@@ -4,8 +4,8 @@
 float latitude = 23.123456;     // 北緯
 float longitude = 121.123456;   // 東經
 float altitude = 100.0;         // 高度 (m)
-float speed = 5.5;              // 速度 (節)
-float heading = 270.0;          // 航向
+float speed = 0;              // 速度 (節)
+float heading = 0.0;          // 航向
 
 unsigned long lastUpdate = 0;
 unsigned long simulatedMillis = 0; // 模擬時間 (ms)
@@ -22,13 +22,10 @@ void setup() {
 void loop() {
   if (millis() - lastUpdate >= stepMillis) {
     lastUpdate = millis();
-    simulatedMillis += stepMillis;
+    simulatedMillis = millis();//+= stepMillis;
 
-    sendGGA();
-    delay(10);
-    sendRMC();
-    delay(10);
-    sendGSA();
+    sendGGAGSA();
+    delay(20);
   }
 }
 
@@ -66,42 +63,106 @@ char calcChecksum(const String &sentence) {
   return cs;
 }
 
-void sendNMEA(const String &sentence) {
-  char checksum = calcChecksum(sentence);
-  Serial2.print(sentence);
-  Serial2.print("*");
-  
-  if (checksum < 16) {
-    Serial2.print("0");
-    Serial.print("0");
-  }
-  Serial2.print(String(checksum, HEX));
-  Serial2.print("\r\n");  // 正確 NMEA 結尾
 
-  Serial.print(sentence);
-  Serial.print("*");
-  Serial.println(String(checksum, HEX));
+
+void sendNMEA(const String &sentence) {
+  // 計算 checksum（不包含 '$'）
+  uint8_t checksum = 0;
+  for (size_t i = 1; i < sentence.length(); ++i) {
+    checksum ^= sentence[i];
+  }
+
+  // 準備完整字串，例如：$GPGGA,...*XX\r\n
+  char buffer[128];  // 根據最大 NMEA 長度，確保足夠
+  snprintf(buffer, sizeof(buffer), "%s*%02X\r\n", sentence.c_str(), checksum);
+
+  // 一次性送出（效率高，避免分段 print）
+  Serial2.write((const uint8_t*)buffer, strlen(buffer));
+
+  // For debug: 印出送出的字串到 USB Serial
+  Serial.write((const uint8_t*)buffer, strlen(buffer));
 }
 
 // --- 各類 NMEA 訊息 ---
 
+float randomOffset(float range) {
+  return ((float)random(-1000, 1000) / 1000.0) * range;
+}
+
 void sendGGA() {
-  String lat = toNMEACoordinate(latitude, true);
-  String lon = toNMEACoordinate(longitude, false);
+  float latOffset = randomOffset(0.00005);  // 約5米
+  float lonOffset = randomOffset(0.00005);  // 約5米
+  float altOffset = randomOffset(0.5);      // 高度微擾
+
+  String lat = toNMEACoordinate(latitude + latOffset, true);
+  String lon = toNMEACoordinate(longitude + lonOffset, false);
   String timeStr = getTimeString();
-  String sentence = "$GPGGA," + timeStr + "," + lat + ",N," + lon + ",E,1,08,0.9," + String(altitude, 1) + ",M,0.0,M,,";
+
+  String sentence = "$GPGGA," + timeStr + "," + lat + ",N," + lon + ",E,1,08,0.9," + String(altitude + altOffset, 1) + ",M,0.0,M,,";
+
   sendNMEA(sentence);
 }
 
 void sendRMC() {
-  String lat = toNMEACoordinate(latitude, true);
-  String lon = toNMEACoordinate(longitude, false);
+  float latOffset = randomOffset(0.00005);
+  float lonOffset = randomOffset(0.00005);
+  float spdOffset = randomOffset(0.2);
+  float hdgOffset = randomOffset(2.0);
+
+  String lat = toNMEACoordinate(latitude + latOffset, true);
+  String lon = toNMEACoordinate(longitude + lonOffset, false);
   String timeStr = getTimeString();
-  String sentence = "$GPRMC," + timeStr + ",A," + lat + ",N," + lon + ",E," + String(speed, 1) + "," + String(heading, 1) + ",310524,,,A";
+
+  String sentence = "$GPRMC," + timeStr + ",A," + lat + ",N," + lon + ",E," +
+                    String(speed + spdOffset, 1) + "," + String(heading + hdgOffset, 1) + ",310524,,,A";
+
   sendNMEA(sentence);
 }
 
 void sendGSA() {
-  String sentence = "$GPGSA,A,3,04,05,09,12,24,25,26,29,30,,,,1.8,1.0,1.2";
+  float pdop = 1.8 + randomOffset(0.2);
+  float hdop = 1.0 + randomOffset(0.1);
+  float vdop = 1.2 + randomOffset(0.1);
+
+  String sentence = "$GPGSA,A,3,04,05,09,12,24,25,26,29,30,,,," +
+                    String(pdop, 1) + "," + String(hdop, 1) + "," + String(vdop, 1);
+
   sendNMEA(sentence);
+}
+
+
+
+void sendGGAGSA() {
+  float latOffset = randomOffset(0.000005);
+  float lonOffset = randomOffset(0.000005);
+  float spdOffset = randomOffset(0.2);
+  float hdgOffset = randomOffset(2.0);
+
+  String lat = toNMEACoordinate(latitude + latOffset, true);
+  String lon = toNMEACoordinate(longitude + lonOffset, false);
+  String timeStr = getTimeString();
+
+  float pdop = 1.5 + randomOffset(0.2);
+  float hdop = 0.5 + randomOffset(0.2);
+  float vdop = 1.2 + randomOffset(0.1);
+
+
+  String sentence_GGA = "$GPGGA," + timeStr + "," + lat + ",N," + lon + ",E,1,08,0.9," + altitude + ",M,0.0,M,,";
+
+  String sentence_GSA = "$GPGSA,A,3,04,05,09,12,24,25,26,29,30,,,," +
+                    String(pdop, 1) + "," + String(hdop, 1) + "," + String(vdop, 1);
+
+  String sentence_RMC = "$GPRMC," + timeStr + ",A," + lat + ",N," + lon + ",E," +
+                    String(speed + spdOffset, 1) + "," + String(heading + hdgOffset, 1) + ",310524,,,A";
+
+  
+
+
+
+  sendNMEA(sentence_GGA);
+  delay(20);
+  sendNMEA(sentence_GSA);
+  delay(20);
+  sendNMEA(sentence_RMC);
+
 }
